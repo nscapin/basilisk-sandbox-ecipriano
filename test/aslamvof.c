@@ -1,24 +1,16 @@
 /**
 # Aslam Extrapolations
 
-We try to use the constant and linear Aslam extrapolations
-([Aslam 2003](#aslam2004partial)), defined in [aslam.h](../src/aslam.h).
-The problem is characterized by a squared domain, with
-dimensions $(-\pi,\pi)\times(-\pi,\pi)$, and by a level
-set function $\phi = \sqrt{x^2 + y^2} - 2$. The field *u*
-exist just in a region of the domain, and must be extrapolated:
-
-$$
-u =
-\begin{cases}
-  0 & \text{if } \phi > 0,\\
-  \cos(x)\sin(x) & \text{if } \phi \leq 0.
-\end{cases}
-$$
+This test case is similar to [aslam.c](aslam.c). However,
+instead of starting from the level set field, we start from
+a vof field, which is converted into level set, and then
+Aslam extrapolations are performed.
 */
 
+#include "grid/multigrid.h"
 #include "utils.h"
 #include "aslam.h"
+#include "redistance.h"
 #include "view.h"
 
 /**
@@ -32,17 +24,42 @@ void write_picture (char* name, scalar u) {
     phi[] = (u[] + u[-1] + u[0,-1] + u[-1,-1])/4.;
   clear();
   isoline ("levelset", val = 0., lw = 2.);
-  isoline ("phi", n = 20, min = -1.5, max = 1.5);
+  isoline ("phi", n = 30);
   squares ("phi", spread = -1);
   box();
   save (name);
 }
 
+void write_levelset (void) {
+  clear();
+  isoline ("levelset", val = 0., lw = 2.);
+  squares ("levelset", spread = -1);
+  box();
+  save ("levelset.png");
+}
+
+/**
+We define a function that converts the vof fraction
+to the level set field. */
+
+void vof_to_ls (scalar f, scalar levelset) {
+  double deltamin = L0/(1 << grid->maxdepth);
+  foreach()
+    levelset[] = -(2.*f[] - 1.)*deltamin*0.75;
+#if TREE
+  restriction({levelset});
+#endif
+  redistance (levelset, imax = 500);
+}
+
+#define ufunc(x,y)(x*y)
+#define circle(x,y,R)(sq(R) - sq(x) - sq(y))
+
 /**
 We declare the level set field *levelset*, and
 the field to extrapolate *u*. */
 
-scalar levelset[], u[];
+scalar levelset[], u[], f[];
 
 int main (void) {
 
@@ -56,10 +73,15 @@ int main (void) {
   double R0 = 2.;
 
   /**
-  We initialize the level set function. */
+  We initialize the volume fraction field. */
 
-  foreach()
-    levelset[] = sqrt (sq (x) + sq (y)) - R0;
+  fraction (f, (sq(R0) - sq(x) - sq(y)));
+
+  /**
+  We reconstruct the levelset field. */
+
+  vof_to_ls (f, levelset);
+  write_levelset();
 
   /**
   We initialize the function *u* to be extrapolated
@@ -71,10 +93,12 @@ int main (void) {
   in order to obtain a steady-state solution. */
 
   foreach()
-    u[] = (levelset[] <= 0.) ? cos(x)*sin(y) : 0.;
+    u[] = ufunc(x,y)*f[];
   write_picture ("initial.png", u);
 
-  constant_extrapolation (u, levelset, 0.01, 300);
+  double dtmin = 0.5*L0/(1 << grid->maxdepth);
+
+  constant_extrapolation (u, levelset, dtmin, 300, c=f);
   write_picture ("constant.png", u);
   fprintf (stderr, "constant = %g\n", statsf(u).sum);
 
@@ -83,8 +107,8 @@ int main (void) {
   *linear_extrapolation()*. */
 
   foreach()
-    u[] = (levelset[] <= 0.) ? cos(x)*sin(y) : 0.;
-  linear_extrapolation (u, levelset, 0.01, 300);
+    u[] = ufunc(x,y)*f[];
+  linear_extrapolation (u, levelset, dtmin, 300, c=f);
   write_picture ("linear.png", u);
   fprintf (stderr, "linear = %g\n", statsf(u).sum);
 }
@@ -92,11 +116,13 @@ int main (void) {
 /**
 ## Results
 
-![Initial field](aslam/initial.png)
+![Level Set](aslamvof/levelset.png)
 
-![Constant extrapolation](aslam/constant.png)
+![Initial field](aslamvof/initial.png)
 
-![Linear extrapolation](aslam/linear.png)
+![Constant extrapolation](aslamvof/constant.png)
+
+![Linear extrapolation](aslamvof/linear.png)
 
 ## References
 

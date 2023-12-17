@@ -17,7 +17,7 @@ The animation shows the consuption of the liquid droplet,
 that maintains a perfectly spherical shape throughtout the
 entire lifetime, as well as the radial velocity field
 caused by the phase change.
-![Evolution of the interface position and the velocity field](fixedflux/movie.mp4)(width="400" height="400")
+![Evolution of the interface position and the velocity field](fixedfluxextrapolation/movie.mp4)(width="400" height="400")
 */
 
 /**
@@ -45,8 +45,10 @@ combined with the fixed flux mechanism, that imposes
 a constant vaporization flowrate.
 */
 
+#include "grid/multigrid.h"
 #include "navier-stokes/centered-evaporation.h"
-#include "navier-stokes/centered-doubled.h"
+#include "navier-stokes/velocity-extrapolation.h"
+#define ufext ufext1
 #include "two-phase.h"
 #include "tension.h"
 #include "evaporation.h"
@@ -66,30 +68,26 @@ must be imposed also for the *extended* fields.
 u.n[top] = neumann (0.);
 u.t[top] = neumann (0.);
 p[top] = dirichlet (0.);
-uext.n[top] = neumann (0.);
-uext.t[top] = neumann (0.);
-pext[top] = dirichlet (0.);
+ps1[top] = dirichlet (0.);
+ps2[top] = dirichlet (0.);
 
 u.n[bottom] = neumann (0.);
 u.t[bottom] = neumann (0.);
 p[bottom] = dirichlet (0.);
-uext.n[bottom] = neumann (0.);
-uext.t[bottom] = neumann (0.);
-pext[bottom] = dirichlet (0.);
+ps1[bottom] = dirichlet (0.);
+ps2[bottom] = dirichlet (0.);
 
 u.n[left] = neumann (0.);
 u.t[left] = neumann (0.);
 p[left] = dirichlet (0.);
-uext.n[left] = neumann (0.);
-uext.t[left] = neumann (0.);
-pext[left] = dirichlet (0.);
+ps1[left] = dirichlet (0.);
+ps2[left] = dirichlet (0.);
 
 u.n[right] = neumann (0.);
 u.t[right] = neumann (0.);
 p[right] = dirichlet (0.);
-uext.n[right] = neumann (0.);
-uext.t[right] = neumann (0.);
-pext[right] = dirichlet (0.);
+ps1[right] = dirichlet (0.);
+ps2[right] = dirichlet (0.);
 
 /**
 ### Model Data
@@ -104,7 +102,6 @@ double mEvapVal = -0.05;
 
 int main(void) {
   L0 = 1.;
-
   /**
   We set the density and viscosity values. */
 
@@ -141,7 +138,6 @@ int main(void) {
   for (int sim = 0; sim < 3; sim++) {
     maxlevel = mllist[sim];
     DT = dtlist[sim];
-    TOLERANCE = 1.e-4;
     init_grid (1 << maxlevel);
     run();
   }
@@ -192,6 +188,13 @@ event output (i++) {
   fprintf (fp, "%.12f %.12f %.12f %.12f\n", t, dropvol, exact(t), relerr);
   fflush (fp);
 }
+
+#if TREE
+event adapt (i++) {
+  adapt_wavelet_leave_interface ({u.x,u.y}, {f},
+      (double[]){1.e-3,1.e-3}, maxlevel, 5, 1);
+}
+#endif
 
 /**
 ### Facets

@@ -152,34 +152,66 @@ double avg_interface (scalar Y, scalar f) {
 }
 
 /**
-## *smooth_field()*: Smooth a discontinuous field, from sf calculation in two-phase.h
+## *vof_source()*: Apply and explicit source to the vof advection equation
 
-* *sf*: smoothed scalar field
-* *f*: initial scalar field
-* *ncycles*: number of smoothing cycles
+This function is implements the plane-shifting approach to
+apply a source term to the vof advection equation. This
+implementation is based on
+[sandbox/ggennari](/sandbox/ggennari/phase_change/phase_change_pure_species.h).
+
+* *f*: vof field
+* *s*: source term [kg/m2/s]
 */
 
-//void smooth_field (scalar sf, scalar f, int ncycles) {
-//  for (int i=0; i<ncycles; i++) {
-//#if dimension <= 2
-//    foreach()
-//      sf[] = (4.*f[] + 
-//        2.*(f[0,1] + f[0,-1] + f[1,0] + f[-1,0]) +
-//        f[-1,-1] + f[1,-1] + f[1,1] + f[-1,1])/16.;
-//#else // dimension == 3
-//    foreach()
-//      sf[] = (8.*f[] +
-//        4.*(f[-1] + f[1] + f[0,1] + f[0,-1] + f[0,0,1] + f[0,0,-1]) +
-//        2.*(f[-1,1] + f[-1,0,1] + f[-1,0,-1] + f[-1,-1] + 
-//      f[0,1,1] + f[0,1,-1] + f[0,-1,1] + f[0,-1,-1] +
-//      f[1,1] + f[1,0,1] + f[1,-1] + f[1,0,-1]) +
-//        f[1,-1,1] + f[-1,1,1] + f[-1,1,-1] + f[1,1,1] +
-//        f[1,1,-1] + f[-1,-1,-1] + f[1,-1,-1] + f[-1,-1,1])/64.;
-//#endif
-//    foreach()
-//      f[] = sf[];
-//  }
-//}
+void vof_source (scalar f, scalar s) {
+  foreach() {
+    if (f[] > F_ERR && f[] < 1.-F_ERR) {
+      coord n = interface_normal(point, f);
+      double alpha = plane_alpha (f[], n);
+      double val = -s[];
+
+#ifdef BYRHOGAS
+      double delta_alpha = -val*dt*sqrt(sq(n.x) + sq(n.y) + sq(n.z))/rho2/Delta;
+#else
+      double delta_alpha = -val*dt*sqrt(sq(n.x) + sq(n.y) + sq(n.z))/rho1/Delta;
+#endif
+      double ff = plane_volume (n, alpha + delta_alpha);
+      if (ff > F_ERR && ff < 1. - F_ERR)
+        f[] = ff;
+      f[] = clamp (f[], 0., 1.);
+    }
+  }
+}
+
+/**
+## *vof_reconstruction()*: VOF reconstruction step
+
+The VOF reconstruction step must be frequently performed to compute
+the Dirac delta which allows surface integrals to be transformed
+into volume intergrals. Used for the evaporation source terms.
+
+* *point*: current cell in a *foreach()* loop
+* *f*: vof field
+*/
+
+typedef struct {
+  coord m, prel;
+  double alpha, area, dirac;
+} vofrecon;
+
+vofrecon vof_reconstruction (Point point, scalar f) {
+  coord m = mycs (point, f);
+  double alpha = plane_alpha (f[], m);
+  coord prel;
+  double area = plane_area_center (m, alpha, &prel);
+#if AXI
+  double dirac = area*(y + prel.y*Delta)/(Delta*y)*cm[];
+#else
+  double dirac = area/Delta*cm[];
+#endif
+
+  return (vofrecon){m, prel, alpha, area, dirac};
+}
 
 /**
 ## *shift_field()*: Shift a field localized at the interface toward the closest pure gas or liquid cells
@@ -226,7 +258,6 @@ void shift_field (scalar fts, scalar f, int dir) {
     sf0[] = fts[];
     fts[] = 0.;
   }
-  boundary({sf0,fts});
 
   // Compute m
   foreach() {

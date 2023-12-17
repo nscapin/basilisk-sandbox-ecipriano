@@ -158,6 +158,10 @@ scalar * slexpList = NULL;    // [NLS]
 scalar * slimpList = NULL;    // [NLS]
 scalar * sgexpList = NULL;    // [NGS]
 scalar * sgimpList = NULL;    // [NGS]
+#ifdef FICK_CORRECTED
+scalar * JLList    = NULL;    // [NLS]
+scalar * JGList    = NULL;    // [NGS]
+#endif
 
 /**
 We declare useful fields used for loops over chemical
@@ -250,6 +254,10 @@ event defaults (i = 0)
   slimpList = NULL;
   sgexpList = NULL;
   sgimpList = NULL;
+#ifdef FICK_CORRECTED
+  JLList    = NULL;
+  JGList    = NULL;
+#endif
 
   for (int jj=0; jj<NLS; jj++) {
     scalar a = new scalar;
@@ -348,6 +356,30 @@ event defaults (i = 0)
   }
   reset (sgexpList, 0.);
   reset (sgimpList, 0.);
+
+#ifdef FICK_CORRECTED
+  for (int jj=0; jj<NLS; jj++) {
+    scalar a = new scalar;
+    free (a.name);
+    char name[20];
+    sprintf (name, "JL_%s", liq_species[jj]);
+    a.name = strdup (name);
+    a.nodump = true;
+    JLList = list_append (JLList, a);
+  }
+  reset (JLList, 0.);
+
+  for (int jj=0; jj<NGS; jj++) {
+    scalar a = new scalar;
+    free (a.name);
+    char name[20];
+    sprintf (name, "JG_%s", gas_species[jj]);
+    a.name = strdup (name);
+    a.nodump = true;
+    JGList = list_append (JGList, a);
+  }
+  reset (JGList, 0.);
+#endif
 
   fL.nodump = true;
   fG.nodump = true;
@@ -508,16 +540,6 @@ event init (i = 0)
       mEvap[] = 0.;
     }
   }
-  boundary(YList);
-  boundary(YLList);
-  boundary(YGList);
-  boundary(YGIntList);
-  boundary(YLIntList);
-  boundary(mEvapList);
-  boundary(slexpList);
-  boundary(slimpList);
-  boundary(sgexpList);
-  boundary(sgimpList);
 
 #ifdef SOLVE_TEMPERATURE
   foreach() {
@@ -525,9 +547,7 @@ event init (i = 0)
     TG[] = TG0*(1. - f[]);
     T[]  = TL[] + TG[];
   }
-  boundary({T,TL,TG});
 #endif
-  
 }
 
 /**
@@ -547,6 +567,10 @@ event cleanup (t = end)
   delete (slimpList), free (slimpList), slimpList = NULL;
   delete (sgexpList), free (sgexpList), sgexpList = NULL;
   delete (sgimpList), free (sgimpList), sgimpList = NULL;
+#ifdef FICK_CORRECTED
+  delete (JLList), free (JLList), JLList = NULL;
+  delete (JGList), free (JGList), JGList = NULL;
+#endif
   delete (fu.tracers), free (fu.tracers), fu.tracers = NULL;
   delete (fuext.tracers), free (fuext.tracers), fuext.tracers = NULL;
   free (LSI);
@@ -594,9 +618,6 @@ event phasechange (i++)
         YG[] = ((1. - f[]) > F_ERR) ? YG[]/(1. - f[]) : 0.;
     }
   }
-  boundary({f,fL,fG});
-  boundary(YGList);
-  boundary(YLList);
 
   /**
   We compute the value of volume fraction *f* on the
@@ -615,7 +636,6 @@ event phasechange (i++)
     if (f[] > F_ERR && f[] < 1.-F_ERR)
       TInt[] = avg_neighbor (point, TL, f);
   }
-  boundary({TInt});
 #endif
 
   /**
@@ -642,17 +662,12 @@ event phasechange (i++)
       MWGmix[] = 1. / (MWGmix[] + 1.e-10);
     }
   }
-  boundary({MWGmix});
 
   /**
   We compute total vaporization flowrate. */
 
-  scalar sumYGInt[];
   foreach() {
     mEvapTot[] = 0.;
-    double sum_jG = 0.;
-    double sum_YGInt = 0.;
-    sumYGInt[] = 0.;
 
     /**
     We reset to zero mEvap for every species, and we set to zero
@@ -720,9 +735,55 @@ event phasechange (i++)
       mole2massfrac (YGIntConv, XGIntConv, inMWG, NLS+1);
 
       /**
+      We set the gas phase interface mass fraction values using
+      the converted fractions. */
+
+      for (int jj=0; jj<NLS; jj++) {
+        scalar YGInt = YGIntList[LSI[jj]];
+        YGInt[] = YGIntConv[jj];
+      }
+
+      /**
+      We adjust the interface mass fractions of the gas-only
+      species in the system. */
+
+      double yGinorm[NGOS];
+      double sumYGi = 0., sumYGl = 0.;
+      if (f[] > F_ERR && f[] < 1.-F_ERR) {
+        for (int jj=0; jj<NLS; jj++) {
+          sumYGl += YGIntConv[jj];
+        }
+        for (int jj=0; jj<NGOS; jj++) {
+          scalar YG = YGList[GOSI[jj]];
+          yGinorm[jj] = YG[];
+          sumYGi += yGinorm[jj];
+        }
+        for (int jj=0; jj<NGOS; jj++) {
+          scalar YGInt = YGIntList[GOSI[jj]];
+          YGInt[] = (1. - sumYGl)*yGinorm[jj]/(sumYGi + 1.e-10);
+        }
+      }
+
+      /**
+      We compute the sum of the diffusive fluxes in gas phase, to be
+      used for the Fick corrected approach. */
+
+      double jGtot = 0.;
+#ifdef FICK_CORRECTED
+      for (int jj=0; jj<NGS; jj++) {
+        scalar YGInt = YGIntList[jj];
+        scalar YG    = YGList[jj];
+        double gtrgrad = ebmgrad (point, YG, fL, fG, fsL, fsG, true, YGInt[], &success);
+        jGtot += -rho2*inDmix2[jj]*gtrgrad;
+      }
+#endif
+
+      /**
       We compute the total vaporization rate from the sum
       of the interface mass balances over all the chemical
       species in liquid phase. */
+
+      double sum_jG = 0., sum_YGInt = 0.;
 
       for (int jj=0; jj<NLS; jj++) {
         scalar YGInt = YGIntList[LSI[jj]];
@@ -734,9 +795,8 @@ event phasechange (i++)
         YGInt[] = YGIntConv[jj];
 
         double gtrgrad = ebmgrad (point, YG, fL, fG, fsL, fsG, true, YGInt[], &success);
-        sum_jG += -rho2*inDmix2[LSI[jj]]*gtrgrad;
+        sum_jG += -rho2*inDmix2[LSI[jj]]*gtrgrad - YGInt[]*jGtot;
         sum_YGInt += YGInt[];
-        sumYGInt[] += YGInt[];
       }
 #ifdef DIFFUSIVE
       mEvapTot[] = sum_jG;
@@ -753,6 +813,16 @@ event phasechange (i++)
   foreach() {
     if (f[] > F_ERR && f[] < 1.-F_ERR) {
 
+      double jGtot = 0.;
+#ifdef FICK_CORRECTED
+      for (int jj=0; jj<NGS; jj++) {
+        scalar YGInt = YGIntList[jj];
+        scalar YG    = YGList[jj];
+        double gtrgrad = ebmgrad (point, YG, fL, fG, fsL, fsG, true, YGInt[], &success);
+        jGtot += -rho2*inDmix2[jj]*gtrgrad;
+      }
+#endif
+
       for (int jj=0; jj<NLS; jj++) {
         scalar mEvap = mEvapList[LSI[jj]];
         scalar YG    = YGList[LSI[jj]];
@@ -760,36 +830,10 @@ event phasechange (i++)
 
         double gtrgrad = ebmgrad (point, YG, fL, fG, fsL, fsG, true, YGInt[], &success);
 #ifdef DIFFUSIVE
-        mEvap[] = - rho2*inDmix2[LSI[jj]]*gtrgrad;
+        mEvap[] = - rho2*inDmix2[LSI[jj]]*gtrgrad - YGInt[]*jGtot;
 #else
-        mEvap[] = mEvapTot[]*YGInt[] - rho2*inDmix2[LSI[jj]]*gtrgrad;
+        mEvap[] = mEvapTot[]*YGInt[] - rho2*inDmix2[LSI[jj]]*gtrgrad - YGInt[]*jGtot;
 #endif
-      }
-    }
-
-    /**
-    We adjust the interface mass fractions of the gas-only
-    species in the system. */
-
-    double yGinorm[NGOS];
-    double sumYGi = 0.;
-    if (f[] > F_ERR && f[] < 1.-F_ERR) {
-      for (int jj=0; jj<NGOS; jj++) {
-        scalar YG = YGList[GOSI[jj]];
-        yGinorm[jj] = YG[];
-        sumYGi += yGinorm[jj];
-      }
-    }
-
-    for (int jj=0; jj<NGOS; jj++) {
-      scalar mEvap = mEvapList[GOSI[jj]];
-      scalar YGInt = YGIntList[GOSI[jj]];
-      //scalar YG    = YGList[GOSI[jj]];
-
-      mEvap[] = 0.; YGInt[] = 0.; YGInt[] = 0.;
-
-      if (f[] > F_ERR && f[] < 1.-F_ERR) {
-        YGInt[] = (1. - sumYGInt[])*yGinorm[jj]/(sumYGi + 1.e-10);
       }
     }
   }
@@ -815,6 +859,44 @@ event phasechange (i++)
   ijc_CoupledNls();
 # endif
 
+#endif
+
+  /**
+  We compute the diffusion fluxes at the current time for the Fick
+  corrected approach. */
+
+#ifdef FICK_CORRECTED
+  foreach() {
+    foreach_elem (YLList, jj) {
+      scalar YL = YLList[jj];
+      scalar JL = JLList[jj];
+
+      JL[] = 0.;
+      foreach_dimension()
+        JL[] += (inDmix1[jj]*face_gradient_x (YL, 1)*fsL.x[1]*fm.x[1] -
+            inDmix1[jj]*face_gradient_x (YL, 0)*fsL.x[]*fm.x[])/Delta;
+    }
+
+    foreach_elem (YGList, jj) {
+      scalar YG = YGList[jj];
+      scalar JG = JGList[jj];
+
+      JG[] = 0.;
+      foreach_dimension()
+        JG[] += (inDmix2[jj]*face_gradient_x (YG, 1)*fsG.x[1]*fm.x[1] -
+            inDmix2[jj]*face_gradient_x (YG, 0)*fsG.x[]*fm.x[])/Delta;
+    }
+  }
+
+  scalar JLtot[], JGtot[];
+  foreach() {
+    JLtot[] = 0.;
+    JGtot[] = 0.;
+    for (scalar JL in JLList)
+      JLtot[] -= JL[]*cm[];
+    for (scalar JG in JGList)
+      JGtot[] -= JG[]*cm[];
+  }
 #endif
 
   /**
@@ -872,11 +954,22 @@ event phasechange (i++)
 #endif
       }
     }
+#ifdef FICK_CORRECTED
+    foreach_elem (YLList, jj) {
+      scalar YL = YLList[jj];
+      scalar slexp = slexpList[jj];
+
+      slexp[] += JLtot[]*YL[];
+    }
+
+    foreach_elem (YGList, jj) {
+      scalar YG = YGList[jj];
+      scalar sgexp = sgexpList[jj];
+
+      sgexp[] += JGtot[]*YG[];
+    }
+#endif
   }
-  boundary(slexpList);
-  boundary(sgexpList);
-  boundary(slimpList);
-  boundary(sgimpList);
 
   /**
   We restore the tracer form of the liquid and gas-phase
@@ -892,11 +985,6 @@ event phasechange (i++)
     TG[] *= (1. - f[])*((1. - f[]) > F_ERR);
 #endif
   }
-  boundary(YLList);
-  boundary(YGList);
-#ifdef SOLVE_TEMPERATURE
-  boundary({TL,TG});
-#endif
 }
 
 /**
@@ -940,12 +1028,6 @@ event tracer_diffusion (i++)
     TG[] = ((1. - fu[]) > F_ERR) ? TG[]/(1. - fu[]) : 0.;
 #endif
   }
-  boundary({fL,fG});
-  boundary(YLList);
-  boundary(YGList);
-#ifdef SOLVE_TEMPERATURE
-  boundary({TL,TG});
-#endif
 
   /**
   We compute the value of volume fraction *f* on the
@@ -964,101 +1046,26 @@ event tracer_diffusion (i++)
 #if TREE
   theta1.refine = theta1.prolongation = fraction_refine;
   theta2.refine = theta2.prolongation = fraction_refine;
-  //theta1.dirty = true;
-  //theta2.dirty = true;
-#endif
-
-#ifdef MODIFIED_DIFFUSION
-  vector pcs1[], pcs2[];
-
-  foreach() {
-    if (fL[] > F_ERR && fL[] < 1.-F_ERR) {
-      coord m = mycs (point, fL); 
-      double alpha = plane_alpha (fL[], m); 
-      coord prel;
-      plane_area_center (m, alpha, &prel);
-      coord pc; 
-      plane_center (m, alpha, fL[], &pc);
-
-      pcs1.x[] = x + pc.x*Delta;
-      pcs1.y[] = y + pc.y*Delta;
-      pcs1.z[] = z + pc.z*Delta;
-    }
-    else {
-      pcs1.x[] = x;
-      pcs1.y[] = y;
-      pcs1.z[] = z;
-    }
-
-    if (fG[] > F_ERR && fG[] < 1.-F_ERR) {
-      coord m = mycs (point, fG); 
-      double alpha = plane_alpha (fG[], m); 
-      coord prel;
-      plane_area_center (m, alpha, &prel);
-      coord pc; 
-      plane_center (m, alpha, fG[], &pc);
-
-      pcs2.x[] = x + pc.x*Delta;
-      pcs2.y[] = y + pc.y*Delta;
-      pcs2.z[] = z + pc.z*Delta;
-    }
-    else {
-      pcs2.x[] = x;
-      pcs2.y[] = y;
-      pcs2.z[] = z;
-    }
-  }
-
-  face vector corrdist1[], corrdist2[];
-  foreach_face() {
-    corrdist1.x[] = Delta/fabs (pcs1.x[] - pcs1.x[-1]);
-    corrdist2.x[] = Delta/fabs (pcs2.x[] - pcs2.x[-1]);
-
-    // check: Palmore version, I don't think it's correct
-
-    //double magdist1 = 0., magdist2 = 0.;
-    //foreach_dimension() {
-    //  magdist1 += sq (pcs1.x[] - pcs1.x[-1]);
-    //  magdist2 += sq (pcs2.x[] - pcs2.x[-1]);
-    //}
-    //magdist1 = sqrt (magdist1);
-    //magdist2 = sqrt (magdist2);
-
-    //corrdist1.x[] = Delta*(pcs1.x[] - pcs1.x[-1])/magdist1;
-    //corrdist2.x[] = Delta*(pcs2.x[] - pcs2.x[-1])/magdist2;
-  }
-  boundary({corrdist2});
+  theta1.dirty = true;
+  theta2.dirty = true;
 #endif
 
   for (int jj=0; jj<NLS; jj++) {
     face vector Dmix1f[];
-    foreach_face() {
+    foreach_face()
       Dmix1f.x[] = inDmix1[jj]*fsL.x[]*fm.x[];
-#ifdef MODIFIED_DIFFUSION
-      Dmix1f.x[] *= corrdist1.x[];
-#endif
-    }
-    boundary((scalar *){Dmix1f});
 
     foreach()
-      theta1[] = cm[]*max(fL[], 1.e-3);
-      //theta1[] = cm[]*max(fL[], T_ERR);
-    boundary({theta1});
+      theta1[] = cm[]*max(fL[], F_ERR);
 
     scalar YL = YLList[jj];
     scalar slexp = slexpList[jj];
-#ifndef USE_DALPHADT
     scalar slimp = slimpList[jj];
-#else
-    scalar slimp[];
+
     foreach() {
-      slimp[] = -(f[] - f0[])/dt;
-#ifdef AXI
-      slimp[] *= y;
-#endif
+      slexp[] = (f[] > F_ERR) ? slexp[] : 0.;
+      slimp[] = (f[] > F_ERR) ? slimp[] : 0.;
     }
-    boundary({slimp});
-#endif
 
     diffusion (YL, dt, D=Dmix1f, r=slexp, beta=slimp, theta=theta1);
   }
@@ -1066,32 +1073,20 @@ event tracer_diffusion (i++)
   for (int jj=0; jj<NGS; jj++) {
 
     face vector Dmix2f[];
-    foreach_face() {
+    foreach_face()
       Dmix2f.x[] = inDmix2[jj]*fsG.x[]*fm.x[];
-#ifdef MODIFIED_DIFFUSION
-      Dmix2f.x[] *= corrdist2.x[];
-#endif
-    }
-    boundary((scalar *){Dmix2f});
 
     foreach()
       theta2[] = cm[]*max(fG[], F_ERR);
-    boundary({theta2});
 
     scalar YG = YGList[jj];
     scalar sgexp = sgexpList[jj];
-#ifndef USE_DALPHADT
     scalar sgimp = sgimpList[jj];
-#else
-    scalar sgimp[];
+
     foreach() {
-      sgimp[] = -(f0[] - f[])/dt;
-#ifdef AXI
-      sgimp[] *= y;
-#endif
+      sgexp[] = (f[] > F_ERR) ? sgexp[] : 0.;
+      sgimp[] = (f[] > F_ERR) ? sgimp[] : 0.;
     }
-    boundary({sgimp});
-#endif
 
     diffusion (YG, dt, D=Dmix2f, r=sgexp, beta=sgimp, theta=theta2);
   }
@@ -1101,12 +1096,7 @@ event tracer_diffusion (i++)
   foreach_face() {
     lambda1f.x[] = lambda1/rho1/cp1*fsL.x[]*fm.x[];
     lambda2f.x[] = lambda2/rho2/cp2*fsG.x[]*fm.x[];
-#ifdef MODIFIED_DIFFUSION
-    lambda1f.x[] *= corrdist1.x[];  
-    lambda2f.x[] *= corrdist2.x[];
-#endif
   }
-  boundary((scalar*){lambda1f, lambda2f});
 
   /**
   Compute source terms for temperature equations. */
@@ -1142,14 +1132,11 @@ event tracer_diffusion (i++)
 #endif
     }
   }
-  boundary({slT,sgT});
-  boundary({slTimp, sgTimp});
 
   foreach() {
     theta1[] = cm[]*max(fL[], F_ERR);
     theta2[] = cm[]*max(fG[], F_ERR);
   }
-  boundary({theta1,theta2});
 
   /**
   Solve diffusion equations for temperature. */
@@ -1166,15 +1153,15 @@ event tracer_diffusion (i++)
 
     double totmassliq = 0.;
     for (scalar YL in YLList)
-      totmassliq += rho1*YL[]*fL[]*dv();
+      totmassliq += YL[];
     for (scalar YL in YLList)
-      YL[] = (totmassliq > 0.) ? rho1*YL[]*fL[]*dv() / totmassliq : 0.;
+      YL[] = (totmassliq > 0.) ? YL[]/totmassliq : 0.;
 
     double totmassgas = 0.;
     for (scalar YG in YGList)
-      totmassgas += rho2*YG[]*fG[]*dv();
+      totmassgas += YG[];
     for (scalar YG in YGList)
-      YG[] = (totmassgas > 0.) ? rho2*YG[]*fG[]*dv() / totmassgas : 0.;
+      YG[] = (totmassgas > 0.) ? YG[]/totmassgas : 0.;
 
     for (scalar YL in YLList)
       YL[] *= f[];
@@ -1185,11 +1172,6 @@ event tracer_diffusion (i++)
     TG[] *= (1. - f[]);
 #endif
   }
-  boundary(YLList);
-  boundary(YGList);
-#ifdef SOLVE_TEMPERATURE
-  boundary({TL,TG});
-#endif
 
   /**
   We reconstruct the volume-averaged mass fractions and
@@ -1218,13 +1200,10 @@ event tracer_diffusion (i++)
       Y[] = YL[] + YG[];
     }
   }
-  boundary(YList);
-  boundary(YGList);
 
 #ifdef SOLVE_TEMPERATURE
   foreach()
     T[] = TL[] + TG[];
-  boundary({T,TL,TG});
 #endif
 }
 

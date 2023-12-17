@@ -13,6 +13,7 @@ in response to the evaporation of the light species. The
 gas phase is initially full of an inert compound, important
 in combustion simulations, which always remains in gas
 phase.
+
 ![Evolution of the mass fraction fields of the light, heavy, and inert components, and the grid refinement](staticbi/movie.mp4)(height=600 width=600)
 */
 
@@ -27,7 +28,7 @@ number of gas and liquid species to be set as compiler
 variables. We don't need to solve the temperature field
 because the vapor pressure is set to a constant value,
 different for each chemical species. Using GSL at level
-1 we activate the coupled solution of the interfae jump
+1 we can activate the coupled solution of the interface jump
 condition. */
 
 #define NGS 3
@@ -48,6 +49,7 @@ change mechanism. */
 #include "tension.h"
 #include "evaporation.h"
 #include "multicomponent.h"
+#include "balances.h"
 #include "view.h"
 
 /**
@@ -121,7 +123,8 @@ int main (void) {
   We run the simulation at three different levels
   of refinement. */
 
-  for (maxlevel = 8; maxlevel <= 8; maxlevel++) {
+  for (maxlevel = 7; maxlevel <= 7; maxlevel++) {
+    //CFL = 0.1;
     init_grid (1 << maxlevel);
     run ();
   }
@@ -138,6 +141,22 @@ diameter decay would not start from 1. */
 event init (i = 0) {
   fraction (f, circle (x, y, 0.5*D0));
   effective_radius0 = sqrt (4./pi*statsf(f).sum);
+
+#ifdef BALANCES
+  mb.liq_species = liq_species;
+  mb.gas_species = gas_species;
+  mb.YLList = YLList;
+  mb.YGList = YGList;
+  mb.mEvapList = mEvapList;
+  mb.liq_start = liq_start;
+  mb.gas_start = gas_start;
+  mb.rho1 = rho1;
+  mb.rho2 = rho2;
+  mb.inDmix1 = inDmix1;
+  mb.inDmix2 = inDmix2;
+  mb.maxlevel = maxlevel;
+  mb.boundaries = true;
+#endif
 }
 
 /**
@@ -146,23 +165,31 @@ species mass fractions in the *bcs* event. */
 
 event bcs (i = 0) {
   scalar YLA = YLList[0], YLB = YLList[1];
+  scalar YGA = YGList[0], YGB = YGList[1], YGC = YGList[2];
 
   YLA[top] = dirichlet (0.);
   YLB[top] = dirichlet (0.);
   YLA[right] = dirichlet (0.);
   YLB[right] = dirichlet (0.);
+  YGA[top] = dirichlet (0.);
+  YGB[top] = dirichlet (0.);
+  YGC[top] = dirichlet (1.);
+  YGA[right] = dirichlet (0.);
+  YGB[right] = dirichlet (0.);
+  YGC[right] = dirichlet (1.);
 }
-
 
 /**
 We adapt the grid according to the mass fractions of the
 species A and B, the velocity and the interface position. */
 
+#if TREE
 event adapt (i++) {
-  scalar YA = YLList[0], YB = YLList[1];
+  scalar YA = YList[0], YB = YList[1];
   adapt_wavelet_leave_interface ({YA,YB,u.x,u.y}, {f},
-      (double[]){1.e-3,1.e-3,1.e-3,1.e-3,1.e-3}, maxlevel, minlevel, 1);
+      (double[]){1.e-4,1.e-4,1.e-3,1.e-3}, maxlevel, minlevel, 1);
 }
+#endif
 
 /**
 ## Post-Processing
@@ -196,7 +223,7 @@ We write the animation with the evolution of the
 chemical species, the interface position and the
 grid refinement. */
 
-event movie (t += 2.e-5; t <= 0.004) {
+event movie (t += 2.e-5; t <= 0.005) {
   clear();
   draw_vof ("f", lw = 1.5);
   squares ("B", linear = true, min = 0., max = 0.56);
@@ -234,7 +261,45 @@ set key top right
 set size square
 set grid
 
-plot "OutputData-8" u 2:4 w l lw 2 t "LEVEL 8"
+plot "OutputData-7" u 2:4 w l lw 2 t "LEVEL 7"
+~~~
+
+The conservation tests compare the mass of the chemical species in
+liquid phase with the total amount of the same species that
+evaporates. If the global conservation is considered, the volume
+fraction is used instead of the mass fraction field. See
+[balances.h](../src/balances.h) for details.
+
+~~~gnuplot Liquid Phase Mass Conservation
+reset
+set xlabel "t [s]"
+set ylabel "(m_L - m_L^0) [kg]"
+set key top right
+set size square
+set grid
+
+plot "balances-7" every 500 u 1:10 w p ps 1.2 lc 1 title "Evaporated Mass Species A", \
+     "balances-7" every 500 u 1:11 w p ps 1.2 lc 2 title "Evaporated Mass Species B", \
+     "balances-7" every 500 u 1:4  w p ps 1.2 lc 3 title "Evaporated Mass Total", \
+     "balances-7" u 1:(-$5) w l lw 2 lc 1 title "Variation Mass Species A", \
+     "balances-7" u 1:(-$6) w l lw 2 lc 2 title "Variation Mass Species B", \
+     "balances-7" u 1:(-$2) w l lw 2 lc 3 title "Variation Mass Total"
+~~~
+
+~~~gnuplot Gas Phase Mass Conservation
+reset
+set xlabel "t [s]"
+set ylabel "(m_G - m_G^0) [kg]"
+set key top left
+set size square
+set grid
+
+plot "balances-7" every 500 u 1:(-$10) w p ps 1.2 lc 1 title "Evaporated Mass Species A", \
+     "balances-7" every 500 u 1:(-$11) w p ps 1.2 lc 2 title "Evaporated Mass Species B", \
+     "balances-7" every 500 u 1:(-$4)  w p ps 1.2 lc 3 title "Evaporated Mass Total", \
+     "balances-7" u 1:7 w l lw 2 lc 1 title "Variation Mass Species A", \
+     "balances-7" u 1:8 w l lw 2 lc 2 title "Variation Mass Species B", \
+     "balances-7" u 1:3 w l lw 2 lc 3 title "Variation Mass Total"
 ~~~
 */
 
