@@ -31,7 +31,9 @@ We define scalar fields with two possible sources of divergence:
 gas-liquid interface, while `drhodt` considers density changes. */
 
 extern scalar stefanflow;
+#ifdef VARPROP
 scalar drhodt[];
+#endif
 
 /**
 ## Projection Function
@@ -63,10 +65,24 @@ mgstats project_sf (face vector uf, scalar p,
   }
 
   /**
+  We add a compensation term for the triperiodic simulations. */
+
+  double s_cp = 0.0;
+#ifdef CLOSED_DOMAIN
+  double vtot = 0.0;
+  //fprintf(stderr, "I am here!\n"); fflush(stderr);
+  foreach(reduction(+:vtot),reduction(+:s_cp)) {
+    vtot += dv();  
+    s_cp += -stefanflow[]*dv();
+  }
+  s_cp /= vtot;
+#endif
+
+  /**
   We add the volume expansion contribution. */
 
   foreach() {
-    div[] += stefanflow[]/dt;
+    div[] += stefanflow[]/dt + s_cp/dt;
 #ifdef VARPROP
     div[] += drhodt[]/dt;
 #endif

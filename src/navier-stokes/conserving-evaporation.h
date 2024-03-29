@@ -17,7 +17,8 @@ static void momentum_refine (Point point, scalar u) {
   refine_bilinear (point, u);
   double rhou = 0.;
   foreach_child()
-    rhou += cm[]*rhov[]*u[];
+    //rhou += cm[]*rhov[]*u[];
+    rhou += cm[]*rho(f[])*u[];
   double du = u[] - rhou/((1 << dimension)*(cm[] + SEPS)*rho(f[]));
   foreach_child()
     u[] += du;
@@ -60,8 +61,8 @@ event defaults (i = 0)
   $\mathbf{u}$ now depend on those on $f$. */
   
   foreach_dimension() {
-    //u.x.refine = u.x.prolongation = momentum_refine;    // don't work well
-    //u.x.restriction = momentum_restriction;             // same
+    u.x.refine = u.x.prolongation = momentum_refine;    // don't work well
+    u.x.restriction = momentum_restriction;             // same
     u.x.depends = list_add (u.x.depends, f);
   }
 #endif
