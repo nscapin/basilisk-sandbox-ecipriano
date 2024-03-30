@@ -43,6 +43,7 @@ change mechanism. */
 #include "../../src/navier-stokes/centered-evaporation.h"
 #include "../../src/navier-stokes/centered-doubled.h"
 #include "two-phase.h"
+#include "../../src/navier-stokes/conserving-evaporation.h"
 #include "tension.h"
 #include "../../src/evaporation.h"
 #include "../../src/multicomponent.h"
