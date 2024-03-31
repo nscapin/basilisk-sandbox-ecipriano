@@ -48,7 +48,7 @@ a constant vaporization flowrate.
 #include "../../src/navier-stokes/centered-evaporation.h"
 #include "../../src/navier-stokes/centered-doubled.h"
 #include "two-phase.h"
-#include "../../src/navier-stokes/conserving-evaporation.h"
+//#include "../../src/navier-stokes/conserving-evaporation.h"
 #include "tension.h"
 #include "../../src/evaporation.h"
 #include "../../src/fixedflux.h"
@@ -308,6 +308,13 @@ event output_pic (t += 1*f_r) {
   sprintf (init_0, "grid_vel_%09d_%02d.ppm", i, maxlevel);
   save(init_0);
 }
+
+event dump (i += 100) {
+  char dname[100];
+  sprintf (dname, "dump_eva_%d.bin", i);
+  dump (dname);
+}
+
 
 #if TREE
 event adapt (i++) {
