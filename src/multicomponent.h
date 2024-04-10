@@ -188,7 +188,7 @@ scalar fG[], fL[], fuT[];
 face vector fsL[], fsG[];
 scalar f0[];
 
-scalar divu[], fold[];
+//scalar divu[], fold[];
 
 /**
 ## Defaults

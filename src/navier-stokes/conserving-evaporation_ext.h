@@ -10,10 +10,10 @@ guarantee conservation of each component of the total momentum. Note
 that these functions do not guarantee conservation of momentum for
 each phase. */
 
-vector q1[], q2[];
+vector q1ext[], q2ext[];
 
 #if TREE
-static void momentum_refine (Point point, scalar u) {
+static void momentum_refine_ext (Point point, scalar u) {
   refine_bilinear (point, u);
   double rhou = 0.;
   foreach_child()
@@ -24,7 +24,7 @@ static void momentum_refine (Point point, scalar u) {
     u[] += du;
 }
 
-static void momentum_restriction (Point point, scalar u)
+static void momentum_restriction_ext (Point point, scalar u)
 {
   double rhou = 0.;
   foreach_child()
@@ -66,9 +66,9 @@ event defaults (i = 0)
   $\mathbf{u}$ now depend on those on $f$. */
   
   foreach_dimension() {
-    u.x.refine = u.x.prolongation = momentum_refine;    // don't work well
-    u.x.restriction = momentum_restriction;             // same
-    u.x.depends = list_add (u.x.depends, f);
+    uext.x.refine = uext.x.prolongation = momentum_refine_ext;    // don't work well
+    uext.x.restriction = momentum_restriction_ext;             // same
+    uext.x.depends = list_add (uext.x.depends, f);
   }
 #endif
 }
@@ -87,15 +87,15 @@ impose boundary conditions which match this definition. This is done
 using the functions below. */
 
 foreach_dimension()
-static double boundary_q1_x (Point neighbor, Point point, scalar q1, void * data)
+static double boundary_q1ext_x (Point neighbor, Point point, scalar q1ext, void * data)
 {
-  return clamp(f[],0.,1.)*rho1*u.x[];
+  return clamp(f[],0.,1.)*rho1*uext.x[];
 }
 
 foreach_dimension()
-static double boundary_q2_x (Point neighbor, Point point, scalar q2, void * data)
+static double boundary_q2ext_x (Point neighbor, Point point, scalar q2ext, void * data)
 {
-  return (1. - clamp(f[],0.,1.))*rho2*u.x[];
+  return (1. - clamp(f[],0.,1.))*rho2*uext.x[];
 }
 
 /**
@@ -104,19 +104,19 @@ this definition. */
 
 #if TREE
 foreach_dimension()
-static void prolongation_q1_x (Point point, scalar q1) {
+static void prolongation_q1ext_x (Point point, scalar q1ext) {
   foreach_child()
-    q1[] = clamp(f[],0.,1.)*rho1*u.x[];
+    q1ext[] = clamp(f[],0.,1.)*rho1*uext.x[];
 }
 
 foreach_dimension()
-static void prolongation_q2_x (Point point, scalar q2) {
+static void prolongation_q2ext_x (Point point, scalar q2ext) {
   foreach_child()
-    q2[] = (1. - clamp(f[],0.,1.))*rho2*u.x[];
+    q2ext[] = (1. - clamp(f[],0.,1.))*rho2*uext.x[];
 }
 #endif
 
-static scalar * tracers1 = NULL;
+static scalar * tracers1_ext = NULL;
 
 /**
 We overload the *vof()* event to transport consistently the volume
@@ -130,53 +130,55 @@ event phasechange (i++) {
   functions. The boundary conditions on $q_1$ and $q_2$ depend on the
   boundary conditions on $f$. */
   
-  for (scalar s in {q1,q2}) {
+  for (scalar s in {q1ext,q2ext}) {
     s.depends = list_add (s.depends, f);
     foreach_dimension()
       s.v.x.i = -1; // not a vector
   }
   for (int i = 0; i < nboundary; i++)
     foreach_dimension() {
-      q1.x.boundary[i] = boundary_q1_x;
-      q2.x.boundary[i] = boundary_q2_x;
+      q1ext.x.boundary[i] = boundary_q1ext_x;
+      q2ext.x.boundary[i] = boundary_q2ext_x;
     }
 #if TREE
   foreach_dimension() {
-    q1.x.prolongation = prolongation_q1_x;
-    q2.x.prolongation = prolongation_q2_x;
+    q1ext.x.prolongation = prolongation_q1ext_x;
+    q2ext.x.prolongation = prolongation_q2ext_x;
   }
 #endif
 
   /**
-  We split the total momentum $q$ into its two components $q1$ and
-  $q2$ associated with $f$ and $1 - f$ respectively. */
+  We split the total momentum $q$ into its two components $q1ext$ and
+  $q2ext$ associated with $f$ and $1 - f$ respectively. */
 
   foreach()
     foreach_dimension() {
       double fc = clamp(f[],0,1);
-      q1.x[] = fc*rho1*u.x[];
-      q2.x[] = (1. - fc)*rho2*u.x[];
+      q1ext.x[] = fc*rho1*uext.x[];
+      q2ext.x[] = (1. - fc)*rho2*uext.x[];
     }
 
   /**
-  Momentum $q2$ is associated with $1 - f$, so we set the *inverse*
+  Momentum $q2ext$ is associated with $1 - f$, so we set the *inverse*
   attribute to *true*. We use the same slope-limiting as for the
   velocity field. */
 
   foreach_dimension() {
-    q2.x.inverse = true;
-    q1.x.gradient = q2.x.gradient = u.x.gradient;
+    q2ext.x.inverse = true;
+    q1ext.x.gradient = q2ext.x.gradient = uext.x.gradient;
   }
 
   /**
-  We associate the transport of $q1$ and $q2$ with $f$ and transport
+  We associate the transport of $q1ext$ and $q2ext$ with $f$ and transport
   all fields consistently using the VOF scheme. */
 
-  tracers1 = f.tracers;
-  f.tracers = list_concat (tracers1, (scalar *){q1, q2});
+  tracers1_ext = f.tracers;
+  //tracers1 = f.tracers;
+  f.tracers = list_concat (tracers1_ext, (scalar *){q1ext, q2ext});
+  //f.tracers = list_concat (tracers1, (scalar *){q1ext, q2ext});
 
 #ifdef VARPROP
-  for (scalar s in {q1, q2})
+  for (scalar s in {q1ext, q2ext})
     s.conservative = false;
 #endif
 }
@@ -188,7 +190,8 @@ event tracer_advection (i++) {
   memory problems), and we restore the vof tracers list. */
 
   free (f.tracers);
-  f.tracers = tracers1;
+  //f.tracers = tracers1;
+  f.tracers = tracers1_ext;
 
   /**
   We recover the advected velocity field using the total momentum and
@@ -196,6 +199,6 @@ event tracer_advection (i++) {
 
   foreach()
     foreach_dimension()
-      u.x[] = (q1.x[] + q2.x[])/rho(f[]);
+      uext.x[] = (q1ext.x[] + q2ext.x[])/rho(f[]);
 }
 
