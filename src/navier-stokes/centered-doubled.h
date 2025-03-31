@@ -60,6 +60,7 @@ step with the volume expansion term due to the phase
 change. */
 
 extern scalar stefanflowext;
+scalar drhodtext[];
 
 trace
 mgstats project_sfext (face vector uf, scalar p,
@@ -82,27 +83,10 @@ mgstats project_sfext (face vector uf, scalar p,
   }
 
   /**
-  We add a compensation term for the triperiodic simulations. */
-
-  double s_cp = 0.0;
-#ifdef CLOSED_DOMAIN
-  double vtot = 0.0;
-  //fprintf(stderr, "I am here!\n"); fflush(stderr);
-  foreach(reduction(+:vtot),reduction(+:s_cp)) {
-    vtot += dv();  
-    s_cp += -stefanflowext[]*dv();
-  }
-  s_cp /= vtot;
-#endif
-
-  /**
   We add the volume expansion contribution. */
 
   foreach() {
-    div[] += stefanflowext[]/dt + s_cp/dt;
-#ifdef VARPROP
-    div[] += drhodt[]/dt;
-#endif
+    div[] += drhodtext[]/dt;
   }
 
   /**
@@ -247,6 +231,7 @@ event defaults (i = 0)
     s.embed_gradient = pressure_embed_gradient_ext;
 #endif // EMBED
 #endif // TREE
+
 }
 
 /**
@@ -272,6 +257,12 @@ event init (i = 0)
 
   dtmax = DT;
   event ("stability");
+
+  /**
+  We set the default divergence source term to zero (for the liquid phase) */
+
+  foreach()
+    drhodtext[] = 0.;
 }
 
 /**
@@ -281,11 +272,11 @@ The timestep for this iteration is controlled by the CFL condition,
 applied to the face centered velocity field $\mathbf{u}_f$; and the
 timing of upcoming events. */
 
-event set_dtmax (i++,last) dtmax = DT;
+//event set_dtmax (i++,last) dtmax = DT;
 
-event stability (i++,last) {
-  dt = dtnext (stokes ? dtmax : timestep (uf, dtmax));
-}
+//event stability (i++,last) {
+//  dt = dtnext (stokes ? dtmax : timestep (uf, dtmax));
+//}
 
 /**
 If we are using VOF or diffuse tracers, we need to advance them (to
@@ -380,7 +371,9 @@ event advection_term (i++,last)
   if (!stokes) {
     prediction_ext();
     mgpf = project_sfext (ufext, pfext, alpha, dt/2., mgpf_ext.nrelax);
+#define advection(...) advection_div(__VA_ARGS__)
     advection ((scalar *){uext}, ufext, dt, (scalar *){gext});
+#undef advection
   }
 }
 
