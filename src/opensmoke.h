@@ -22,6 +22,7 @@ external dependencies:
 */
 
 #include "OpenSMOKE_Interface.h"
+#define OPENSMOKE 1
 
 #pragma autolink -L$OPENSMOKE_INTERFACE/build -lopensmoke
 
@@ -42,7 +43,7 @@ event defaults (i = 0)
       getenv ("OPENSMOKE_INTERFACE"), kinfolder);
 
   char liqfolder_root[120];
-  sprintf (liqfolder_root, "%s/kinetics/%s",
+  sprintf (liqfolder_root, "%s/kinetics/LiquidProperties/%s",
       getenv ("OPENSMOKE_INTERFACE"), liqfolder);
 
   OpenSMOKE_Init();

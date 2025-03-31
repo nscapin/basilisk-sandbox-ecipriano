@@ -204,10 +204,23 @@ event output_data (i++) {
 We write on a file the temperature and mass fraction
 profiles at different time instants. */
 
+bool opened = false;
+
+event cleanup (t = end)
+  opened = false;
+
 event profiles (t = {1.03e-5, 6.03e-5, 1.40e-4}) {
   char name[80];
   sprintf (name, "Profiles-%d", maxlevel);
-  FILE * fp = fopen (name, "a");
+
+  char mode[10];
+  if (!opened)
+    sprintf (mode, "w");
+  else
+    sprintf (mode, "a");
+
+  FILE * fp = fopen (name, mode);
+  opened = true;
 
   /**
   We reconstruct the total mass fraction summing the
@@ -225,39 +238,13 @@ event profiles (t = {1.03e-5, 6.03e-5, 1.40e-4}) {
   }
 
   /**
-  We create an array with the mass fraction profiles
-  for each processor. */
-
-  Array * arrmassf = array_new();
-  for (double x = 0.; x < L0; x += 0.5*L0/(1 << maxlevel)) {
-    double valm = interpolate (Ysum, x, 0.);
-    valm = (valm == nodata) ? 0. : valm;
-    array_append (arrmassf, &valm, sizeof(double));
-  }
-  double * massf = (double *)arrmassf->p;
-
-  /**
-  We sum each element of the arrays in every processor. */
-
-  @if _MPI
-  int size = arrmassf->len/sizeof(double);
-  MPI_Allreduce (MPI_IN_PLACE, massf, size, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  @endif
-
-  /**
   The master node writes the profiles on a file. */
 
-  if (pid() == 0) {
-    int count = 0;
-    for (double x = 0.; x < L0; x += 0.5*L0/(1 << maxlevel)) {
-      fprintf (fp, "%g %g\n", x, massf[count]);
-      count++;
-    }
-    fprintf (fp, "\n\n");
-    fflush (fp);
-  }
+  for (double x = 0.; x < L0; x += 0.5*L0/(1 << maxlevel))
+    fprintf (fp, "%g %g\n", x, interpolate (Ysum, x, 0.));
+  fprintf (fp, "\n\n");
+  fflush (fp);
   fclose (fp);
-  array_free (arrmassf);
 }
 
 /**
@@ -276,7 +263,7 @@ event movie (t += 0.5e-5, t <= 1.5e-4) {
 }
 
 /**
-## References
+## Results
 
 The numerical results are compared with the results obtained
 by [Pathak et al., 2018](#pathak2018steady) using a radially
