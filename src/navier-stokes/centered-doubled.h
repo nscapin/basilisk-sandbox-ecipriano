@@ -59,7 +59,7 @@ We define the function that performs the projection
 step with the volume expansion term due to the phase
 change. */
 
-extern scalar stefanflowext;
+//extern scalar stefanflowext;
 scalar drhodtext[];
 
 trace
