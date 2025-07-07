@@ -61,12 +61,26 @@ mgstats project_sf (face vector uf, scalar p,
       div[] += uf.x[1] - uf.x[];
     div[] /= dt*Delta;
   }
+  
+  /**
+  We add a compensation term for the triperiodic simulations. */
+
+  double s_cp = 0.0;
+#ifdef CLOSED_DOMAIN
+  double vtot = 0.0;
+  //fprintf(stderr, "I am here!\n"); fflush(stderr);
+  foreach(reduction(+:vtot) reduction(+:s_cp)) {
+    vtot += dv();  
+    s_cp += -stefanflow[]*dv();
+  }
+  s_cp /= vtot;
+#endif
 
   /**
   We add the volume expansion contribution. */
 
   foreach() {
-    div[] += stefanflow[]/dt;
+    div[] += stefanflow[]/dt + s_cp/dt;
     div[] += drhodt[]/dt;
   }
 
